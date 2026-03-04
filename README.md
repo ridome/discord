@@ -3,19 +3,20 @@
 一个本地运行的 Discord 机器人，用于通过 Discord 指挥本地 VS Code + Codex 干活，采用 **Diff 优先** 工作流：
 
 1. Discord 发起任务。
-2. Codex 只生成结构化 JSON + unified diff。
+2. Codex/Gemini 只生成结构化 JSON + unified diff。
 3. 本地 Orchestrator 进行补丁校验、`git apply`、测试、自动提交。
 4. 高危命令走二次确认。
 5. 支持 Slash、中文自然语言、语音转指令（Google Speech API，可选）、Gemini 语义意图增强（可选）。
 
 ## 功能覆盖
 
-- Slash 命令：`/ping` `/task` `/status` `/approve` `/reject` `/cancel` `/run` `/open` `/read` `/repos` `/voice_join` `/voice_leave` `/voice_status` `/memory_add` `/memory_list` `/memory_delete` `/memory_clear` `/memory_auto`
+- Slash 命令：`/ping` `/provider` `/task` `/status` `/approve` `/reject` `/cancel` `/run` `/open` `/read` `/repos` `/voice_join` `/voice_leave` `/voice_status` `/memory_add` `/memory_list` `/memory_delete` `/memory_clear` `/memory_auto`
 - 自然语言确认流：支持中英文命令词（如“创建任务/状态/批准/拒绝/取消/执行/打开/仓库”），先回显等价 Slash 再确认
 - 自由表达兜底：允许直接说自然句（例如“我想创建一个文件夹，里面帮我写一个笑话”），会自动映射到 `/task`（单仓库场景自动推断 repo）
 - 语音消息识别：识别音频附件（ogg/webm/mp3/wav/flac）为中文文本，再按自然语言命令执行确认流
 - 语音通话基础控制：`/voice_join` `/voice_leave` `/voice_status`（先支持入会待命）
 - Gemini 智能理解（可选）：当规则解析失败时，自动调用 Gemini 把自然语言转成结构化命令或给出中文帮助回复
+- Gemini 代码补丁生成（可选）：可通过 `PATCH_PROVIDER=gemini` 直接用 Gemini 生成 unified diff
 - 短期上下文记忆：按用户+频道保存最近输入，辅助 Gemini 理解“这个/刚刚那个/上一个”这类指代
 - 长期记忆：用户记忆 + Gemini 建议记忆 + 周期性失败复盘进化记忆
 - 三重访问控制：用户 ID + 频道 ID + 角色 ID
@@ -31,7 +32,7 @@
 
 - `src/discord` Discord 网关与交互
 - `src/orchestrator` 任务编排与状态机
-- `src/adapters` Codex CLI 适配器
+- `src/adapters` Codex/Gemini 适配器
 - `src/engines` Git/Patch/VSCode 引擎
 - `src/store` SQLite 状态存储
 - `src/security` 访问控制与命令风控
@@ -42,7 +43,7 @@
 
 - Node.js >= 14.16
 - 本机已安装并可执行：
-  - `codex`
+  - `codex`（当 `PATCH_PROVIDER` 包含 codex 时需要）
   - `git`
   - `code` (VS Code CLI)
 - Discord Bot 已创建并拿到 token
@@ -68,7 +69,8 @@ copy config\repos.example.json config\repos.json
 - `DISCORD_APP_ID` Application ID
 - `DISCORD_PROXY_URL` 可选，网络受限时填代理（如 `http://127.0.0.1:10809`）
 - `CODEX_EXECUTABLE` 可选，指定 Codex CLI 路径（出现 `spawn codex ENOENT` 时建议设置）
-- `GEMINI_API_KEY` 可选，开启 Gemini 语义理解增强
+- `PATCH_PROVIDER` 补丁生成模型：`auto|codex|gemini`（默认 `auto`，即 Codex 失败时回退 Gemini）
+- `GEMINI_API_KEY` 可选，开启 Gemini（自然语言理解 + 可选补丁生成）
 - `GEMINI_MODEL` 可选，默认 `gemini-2.0-flash`
 - `GEMINI_API_BASE_URL` 可选，默认 `https://generativelanguage.googleapis.com/v1beta`
 - `GEMINI_TIMEOUT_MS` 可选，请求超时（毫秒），默认 `20000`
@@ -134,6 +136,10 @@ pm2 startup
 ## 命令示例
 
 - `/task repo:sample prompt:"修复登录重定向" open_vscode:true`
+- `/provider`（查看当前补丁模型）
+- `/provider mode:gemini`（切到 Gemini 生成补丁）
+- `/provider mode:codex`（切到 Codex 生成补丁）
+- `/provider mode:auto`（Codex 优先，失败自动回退 Gemini）
 - `/task repo:D:\work\test prompt:"分析这个目录下的代码结构"`
 - `/ping`
 - `/status task_id:task-xxxx`
@@ -187,6 +193,6 @@ npm run build
 - 默认不执行 `git push`。
 - 如果启动时报 `ETIMEDOUT ...:443`，通常是网关连通问题。请在 `.env` 设置 `DISCORD_PROXY_URL=http://127.0.0.1:10809`（按你的代理端口调整）。
 - 如果任务时报 `Repo path not found` 或 `not a git repository`，请检查 `config/repos.json` 中该 repo 的 `path` 是否存在且为本地 Git 仓库，然后重启机器人。
-- 对 Codex 建议的测试命令会做过滤（例如 `git apply ... <patch-file>` 这类占位命令会忽略），并自动回退到仓库默认测试。
-- Gemini 只用于“意图解析/答复增强”，不会直接执行命令或改代码；所有高风险动作仍走原有确认链路。
+- 对模型建议的测试命令会做过滤（例如 `git apply ... <patch-file>` 这类占位命令会忽略），并自动回退到仓库默认测试。
+- 当 `PATCH_PROVIDER=gemini` 或 `auto` 回退命中时，Gemini 会生成结构化补丁；补丁仍必须通过本地校验与审批后才会应用。
 - 当主模型遇到 `429/503/网络超时` 或模型不支持时，会自动尝试回退模型（`gemini-2.0-flash` / `gemini-1.5-flash`）。

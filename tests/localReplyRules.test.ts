@@ -34,7 +34,18 @@ describe("localReplyRules", () => {
       "sample",
       "Gemini API error: HTTP 404 model not supported"
     );
-    expect(reply).toContain("本地规则");
+    expect(reply).toContain("Gemini 当前不稳定");
+    expect(reply).toContain("本地");
+  });
+
+  it("answers price concern even when gemini fails", () => {
+    const reply = buildContextualFallbackReply(
+      "主要是担心价格",
+      "sample",
+      "Gemini API error: timeout"
+    );
+    expect(reply).toContain("价格");
+    expect(reply).toContain("轻量模型");
   });
 
   it("answers restart question without model dependency", () => {

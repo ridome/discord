@@ -20,6 +20,7 @@ const envSchema = z.object({
   DISCORD_APP_ID: z.string().min(1),
   DISCORD_PROXY_URL: z.string().optional(),
   CODEX_EXECUTABLE: z.string().optional(),
+  PATCH_PROVIDER: z.enum(["codex", "gemini", "auto"]).default("auto"),
   GEMINI_API_KEY: z.string().optional(),
   GEMINI_MODEL: z.string().default("gemini-2.0-flash"),
   GEMINI_API_BASE_URL: z.string().default("https://generativelanguage.googleapis.com/v1beta"),
@@ -58,6 +59,7 @@ export interface AppConfig {
   discordAppId: string;
   discordProxyUrl: string | null;
   codexExecutable: string | null;
+  patchProvider: "codex" | "gemini" | "auto";
   geminiApiKey: string | null;
   geminiModel: string;
   geminiApiBaseUrl: string;
@@ -134,6 +136,7 @@ export function loadConfig(): AppConfig {
     codexExecutable: env.CODEX_EXECUTABLE && env.CODEX_EXECUTABLE.trim().length > 0
       ? env.CODEX_EXECUTABLE.trim()
       : null,
+    patchProvider: env.PATCH_PROVIDER,
     geminiApiKey: env.GEMINI_API_KEY && env.GEMINI_API_KEY.trim().length > 0
       ? env.GEMINI_API_KEY.trim()
       : null,

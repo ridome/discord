@@ -4,6 +4,7 @@ import path from "path";
 import { spawnSync } from "child_process";
 import { z } from "zod";
 import { CodexPatchResult } from "../types";
+import { PatchGenerateInput, PatchGenerator } from "./patchGenerator";
 import { runCommand } from "../utils/process";
 
 const outputSchema = z.object({
@@ -27,23 +28,20 @@ function extractJson(raw: string): unknown {
   return JSON.parse(text);
 }
 
-export interface CodexGenerateInput {
-  repoPath: string;
-  userPrompt: string;
-  timeoutMs: number;
-  onStream?: (message: string) => void;
-}
+export type CodexGenerateInput = PatchGenerateInput;
 
 export interface CodexAdapterOptions {
   executable: string | null;
 }
 
-export class CodexAdapter {
+export class CodexAdapter implements PatchGenerator {
+  public readonly providerId = "codex";
+  public readonly displayName = "Codex";
   private cachedExecutable: string | null = null;
 
   constructor(private readonly options: CodexAdapterOptions) {}
 
-  public async generatePatch(input: CodexGenerateInput): Promise<CodexPatchResult> {
+  public async generatePatch(input: PatchGenerateInput): Promise<CodexPatchResult> {
     if (!fs.existsSync(input.repoPath)) {
       throw new Error(`Repo path not found: ${input.repoPath}`);
     }

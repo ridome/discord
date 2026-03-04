@@ -78,6 +78,12 @@ const commandAliasMap: Record<string, string> = {
   打开: "open",
   打开vscode: "open",
 
+  provider: "provider",
+  model: "provider",
+  模型: "provider",
+  切换模型: "provider",
+  切换provider: "provider",
+
   read: "read",
   cat: "read",
   查看文件: "read",
@@ -141,7 +147,11 @@ const keyAliasMap: Record<string, string> = {
 
   open_vscode: "open_vscode",
   open: "open_vscode",
-  打开vscode: "open_vscode"
+  打开vscode: "open_vscode",
+
+  mode: "mode",
+  provider: "mode",
+  模型: "mode"
 };
 
 function normalizeCommand(input: string): string | null {
@@ -224,6 +234,25 @@ export function parseNaturalLanguageBody(rawBody: string): ParsedNlCommand | nul
       slashCommand: "ping",
       args: {},
       preview: "/ping"
+    };
+  }
+
+  if (command === "provider") {
+    const modeRaw = (keyValues.mode ?? plain[0] ?? "").toString().trim().toLowerCase();
+    if (!modeRaw) {
+      return {
+        slashCommand: "provider",
+        args: {},
+        preview: "/provider"
+      };
+    }
+    if (!["auto", "codex", "gemini"].includes(modeRaw)) {
+      return null;
+    }
+    return {
+      slashCommand: "provider",
+      args: { mode: modeRaw },
+      preview: `/provider mode=${modeRaw}`
     };
   }
 
@@ -426,6 +455,24 @@ export function parseNaturalLanguageFreeText(
       slashCommand: "repos",
       args: {},
       preview: "/repos"
+    };
+  }
+
+  if (/(当前.*(模型|provider)|现在.*(模型|provider)|用的.*(gemini|codex)|provider)/i.test(text)) {
+    return {
+      slashCommand: "provider",
+      args: {},
+      preview: "/provider"
+    };
+  }
+
+  const providerMatch = text.match(/(?:切换|改成|设为|设置为|使用|换成).{0,8}(gemini|codex|auto)/i);
+  if (providerMatch?.[1]) {
+    const mode = providerMatch[1].toLowerCase();
+    return {
+      slashCommand: "provider",
+      args: { mode },
+      preview: `/provider mode=${mode}`
     };
   }
 

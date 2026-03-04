@@ -7,7 +7,11 @@ import { PatchEngine } from "./engines/patchEngine";
 import { VSCodeBridge } from "./engines/vscodeBridge";
 import { Logger } from "./logger";
 import { CodexAdapter } from "./adapters/codexAdapter";
+import { GeminiPatchAdapter } from "./adapters/geminiPatchAdapter";
 import { GeminiAssistantAdapter } from "./adapters/geminiAssistantAdapter";
+import { FallbackPatchGenerator } from "./adapters/fallbackPatchGenerator";
+import { PatchGenerator } from "./adapters/patchGenerator";
+import { PatchGeneratorRouter } from "./adapters/patchGeneratorRouter";
 import { GoogleSpeechAdapter } from "./adapters/googleSpeechAdapter";
 import { EvolutionService } from "./autonomy/evolutionService";
 import { TaskOrchestrator } from "./orchestrator/taskOrchestrator";
@@ -15,6 +19,27 @@ import { AccessControl } from "./security/accessControl";
 import { CommandGuard } from "./security/commandGuard";
 import { RepoRegistry } from "./security/repoRegistry";
 import { StateStore } from "./store/stateStore";
+
+function buildPatchGeneratorRouter(
+  config: ReturnType<typeof loadConfig>,
+  logger: Logger,
+  codexAdapter: CodexAdapter,
+  geminiPatchAdapter: GeminiPatchAdapter | null
+): PatchGeneratorRouter {
+  const autoProvider: PatchGenerator = geminiPatchAdapter
+    ? new FallbackPatchGenerator(codexAdapter, geminiPatchAdapter, logger)
+    : codexAdapter;
+
+  return new PatchGeneratorRouter(
+    {
+      codex: codexAdapter,
+      gemini: geminiPatchAdapter ?? undefined,
+      auto: autoProvider
+    },
+    config.patchProvider,
+    logger
+  );
+}
 
 function acquireSingleInstanceLock(): void {
   const lockPath = path.resolve("./data/bot.lock");
@@ -112,6 +137,25 @@ async function main(): Promise<void> {
   const codexAdapter = new CodexAdapter({
     executable: config.codexExecutable
   });
+  const geminiPatchAdapter = config.geminiApiKey
+    ? new GeminiPatchAdapter(
+        {
+          apiKey: config.geminiApiKey,
+          model: config.geminiModel,
+          apiBaseUrl: config.geminiApiBaseUrl,
+          timeoutMs: config.geminiTimeoutMs,
+          strictModel: config.geminiStrictModel,
+          proxyUrl: config.discordProxyUrl
+        },
+        logger
+      )
+    : null;
+  const patchGenerator = buildPatchGeneratorRouter(config, logger, codexAdapter, geminiPatchAdapter);
+  logger.info(
+    `[patch-provider] active=${patchGenerator.getState().active} available=${patchGenerator
+      .getState()
+      .available.join(",")}`
+  );
   const patchEngine = new PatchEngine();
   const gitEngine = new GitEngine({
     commitAuthorName: "discord-codex-bot",
@@ -147,7 +191,7 @@ async function main(): Promise<void> {
   const orchestrator = new TaskOrchestrator(
     stateStore,
     repoRegistry,
-    codexAdapter,
+    patchGenerator,
     patchEngine,
     gitEngine,
     commandGuard,
@@ -157,7 +201,7 @@ async function main(): Promise<void> {
       planApprovalRequired: config.planApprovalRequired,
       taskTimeoutMinutes: config.taskTimeoutMinutes,
       streamThrottleSeconds: config.streamThrottleSeconds,
-      codexRetryCount: 1,
+      patchRetryCount: 1,
       autoStashBeforeApply: config.autoStashBeforeApply
     }
   );

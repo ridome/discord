@@ -25,10 +25,10 @@ export function buildExecutionPlan(input: PlanBuildInput): ExecutionPlan {
   const summary = `目标：${firstLine(input.prompt)}`;
   const testHint = input.testProfile
     ? `使用测试配置 \`${input.testProfile}\``
-    : "使用仓库默认测试策略（若无则使用 Codex 建议）";
+    : "使用仓库默认测试策略（若无则使用模型建议）";
 
   const notes: string[] = [
-    "补丁生成与校验在本地执行，Codex 不会直接改你的文件。",
+    "补丁生成与校验在本地执行，模型不会直接改你的文件。",
     "测试失败时不会自动提交，改动会保留供你继续处理。",
     "默认只提交到任务分支，不会自动 push。"
   ];
@@ -40,7 +40,7 @@ export function buildExecutionPlan(input: PlanBuildInput): ExecutionPlan {
     summary,
     steps: [
       `在仓库 \`${input.repoId}\` 基于 \`${input.baseBranch}\` 准备任务分支 \`${input.branchName}\`。`,
-      "调用 Codex 生成结构化补丁（Diff 优先，只读沙盒）。",
+      "调用模型生成结构化补丁（Diff 优先，只读模式）。",
       "执行补丁安全校验并发送补丁审批卡片。",
       `你批准补丁后应用改动并执行测试（${testHint}）。`,
       "测试通过后自动提交到任务分支。"

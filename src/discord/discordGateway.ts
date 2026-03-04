@@ -184,6 +184,23 @@ export class DiscordGateway {
         description: "Check bot health and diagnostics"
       },
       {
+        name: "provider",
+        description: "Show or change patch provider (codex/gemini/auto)",
+        options: [
+          {
+            type: 3,
+            name: "mode",
+            description: "Target provider",
+            required: false,
+            choices: [
+              { name: "auto", value: "auto" },
+              { name: "codex", value: "codex" },
+              { name: "gemini", value: "gemini" }
+            ]
+          }
+        ]
+      },
+      {
         name: "task",
         description: "Create a new codex task",
         options: [
@@ -466,6 +483,7 @@ export class DiscordGateway {
 
     try {
       if (commandName === "ping") {
+        const providerState = this.orchestrator.getPatchProviderState();
         await interaction.createMessage({
           content:
             `pong\\n` +
@@ -474,6 +492,8 @@ export class DiscordGateway {
             `speech=${this.speechAdapter ? "on" : "off"}\\n` +
             `gemini=${this.geminiAdapter ? "on" : "off"}\\n` +
             `gemini_model=${this.geminiAdapter ? this.config.geminiModel : "disabled"}\\n` +
+            `patch_provider=${providerState.active}\\n` +
+            `patch_provider_available=${providerState.available.join(",")}\\n` +
             `gemini_first=${this.config.geminiFirst ? "on" : "off"}\\n` +
             `memory_gemini_auto=${this.config.memoryGeminiAuto ? "on" : "off"}\\n` +
             `memory_context_limit=${this.config.memoryContextLimit}\\n` +
@@ -487,6 +507,40 @@ export class DiscordGateway {
             `auto_stash_before_apply=${this.config.autoStashBeforeApply ? "on" : "off"}\\n` +
             `prefix=${this.config.botPrefix}\\n` +
             `hint=If @bot text has no response, enable MESSAGE CONTENT INTENT in Discord Developer Portal and ensure bot has View/Send/Read Message History permissions.`,
+          flags: 64
+        });
+        return;
+      }
+
+      if (commandName === "provider") {
+        const modeRaw = getOption(options, "mode");
+        if (modeRaw === undefined || modeRaw === null || String(modeRaw).trim() === "") {
+          const state = this.orchestrator.getPatchProviderState();
+          await interaction.createMessage({
+            content:
+              `patch_provider=${state.active}\n` +
+              `display=${state.displayName}\n` +
+              `available=${state.available.join(",")}`,
+            flags: 64
+          });
+          return;
+        }
+
+        const mode = String(modeRaw).trim().toLowerCase();
+        if (!["auto", "codex", "gemini"].includes(mode)) {
+          await interaction.createMessage({
+            content: "mode 仅支持 auto/codex/gemini",
+            flags: 64
+          });
+          return;
+        }
+
+        const state = this.orchestrator.setPatchProvider(mode as "auto" | "codex" | "gemini");
+        await interaction.createMessage({
+          content:
+            `已切换 patch_provider=${state.active}\n` +
+            `display=${state.displayName}\n` +
+            `available=${state.available.join(",")}`,
           flags: 64
         });
         return;
@@ -894,12 +948,13 @@ export class DiscordGateway {
 
     const mentioned = isMentionedMessage(msg, botId);
     const prefixed = isTriggered(content, this.config.botPrefix, botId);
-    const textActivated = mentioned || prefixed || !this.config.requireTrigger;
+    const commandActivated = mentioned || prefixed;
+    const textActivated = commandActivated || !this.config.requireTrigger;
     const audioAttachment = this.pickAudioAttachment(msg);
 
     if (textActivated || audioAttachment) {
       this.logger.info(
-        `message event user=${userId} channel=${channelId} mentioned=${mentioned} prefixed=${prefixed} textActivated=${textActivated} audio=${Boolean(audioAttachment)}`
+        `message event user=${userId} channel=${channelId} mentioned=${mentioned} prefixed=${prefixed} commandActivated=${commandActivated} textActivated=${textActivated} audio=${Boolean(audioAttachment)}`
       );
     }
 
@@ -928,20 +983,28 @@ export class DiscordGateway {
     }
 
     const input = stripTrigger(content, this.config.botPrefix, botId);
-    const parsed = parseNaturalLanguageCommand(content, this.config.botPrefix, botId);
-    const allowImplicitTaskIntent = mentioned || prefixed;
+    const parsed = commandActivated
+      ? parseNaturalLanguageCommand(content, this.config.botPrefix, botId)
+      : null;
+    const allowImplicitTaskIntent = commandActivated;
     const recentUserInputs = this.getRecentUserContext(userId, channelId);
-    const contextualRead = this.tryBuildReadCommandFromContext(input, recentUserInputs);
+    const recentConversation = this.getRecentConversationContext(userId, channelId);
+    const contextualRead = commandActivated
+      ? this.tryBuildReadCommandFromContext(input, recentUserInputs)
+      : null;
     const parsedFinal =
-      parsed ??
-      parseNaturalLanguageFreeText(input, {
-        defaultRepoId: this.getDefaultRepoId(),
-        allowImplicitTaskIntent
-      }) ??
-      contextualRead;
+      commandActivated
+        ? parsed ??
+          parseNaturalLanguageFreeText(input, {
+            defaultRepoId: this.getDefaultRepoId(),
+            allowImplicitTaskIntent
+          }) ??
+          contextualRead
+        : null;
     const inputBrief = input.length > 80 ? `${input.slice(0, 80)}...` : input;
     this.saveUserContextInput(userId, channelId, input);
     const memoryContext = this.getUserMemoryContext(userId);
+    const geminiMode = commandActivated ? "auto" : "reply_only";
 
     let geminiFailureMessage: string | null = null;
     let geminiTried = false;
@@ -957,10 +1020,15 @@ export class DiscordGateway {
           this.listRepoIds(),
           this.config.allowLocalPathRepo,
           memoryContext,
-          recentUserInputs
+          recentConversation,
+          geminiMode
         );
         this.trySaveGeminiMemory(userId, channelId, ai.memoryToSave);
         if (ai.command) {
+          if (!commandActivated) {
+            this.logger.info(`nl route=gemini_command_ignored text="${inputBrief}"`);
+            return false;
+          }
           this.logger.info(`nl route=gemini_command command=${ai.command.slashCommand} text="${inputBrief}"`);
           await this.sendNlConfirmation(ai.command, userId, channelId);
           return true;
@@ -968,6 +1036,7 @@ export class DiscordGateway {
         if (ai.reply) {
           this.logger.info(`nl route=gemini_reply text="${inputBrief}"`);
           await this.bot.createMessage(channelId, ai.reply);
+          this.saveAssistantContextOutput(userId, channelId, ai.reply);
           return true;
         }
         this.logger.info(`nl route=gemini_none text="${inputBrief}"`);
@@ -989,6 +1058,7 @@ export class DiscordGateway {
       if (localReply) {
         this.logger.info(`nl route=local_reply implicitTask=${allowImplicitTaskIntent} text="${inputBrief}"`);
         await this.bot.createMessage(channelId, localReply);
+        this.saveAssistantContextOutput(userId, channelId, localReply);
         return;
       }
     }
@@ -1001,10 +1071,12 @@ export class DiscordGateway {
 
     if (!parsedFinal) {
       this.logger.info(`nl route=fallback implicitTask=${allowImplicitTaskIntent} text="${inputBrief}"`);
+      const fallbackReply = buildContextualFallbackReply(input, this.getDefaultRepoId(), geminiFailureMessage);
       await this.bot.createMessage(
         channelId,
-        buildContextualFallbackReply(input, this.getDefaultRepoId(), geminiFailureMessage)
+        fallbackReply
       );
+      this.saveAssistantContextOutput(userId, channelId, fallbackReply);
       return;
     }
 
@@ -1030,6 +1102,7 @@ export class DiscordGateway {
 
       await this.bot.createMessage(msg.channel.id, `语音识别：${transcript}`);
       const recentUserInputs = this.getRecentUserContext(msg.author.id, msg.channel.id);
+      const recentConversation = this.getRecentConversationContext(msg.author.id, msg.channel.id);
       const parsedDirect = parseNaturalLanguageBody(transcript);
       const parsedFree =
         parsedDirect ??
@@ -1050,7 +1123,7 @@ export class DiscordGateway {
             this.listRepoIds(),
             allowLocalPathRepo,
             memoryContext,
-            recentUserInputs
+            recentConversation
           );
           this.trySaveGeminiMemory(msg.author.id, msg.channel.id, ai.memoryToSave);
           if (ai.command) {
@@ -1059,6 +1132,7 @@ export class DiscordGateway {
           }
           if (ai.reply) {
             await this.bot.createMessage(msg.channel.id, ai.reply);
+            this.saveAssistantContextOutput(msg.author.id, msg.channel.id, ai.reply);
             return;
           }
         } catch (err) {
@@ -1071,15 +1145,22 @@ export class DiscordGateway {
         const localReply = tryLocalIntentReply(transcript, this.getDefaultRepoId());
         if (localReply) {
           await this.bot.createMessage(msg.channel.id, localReply);
+          this.saveAssistantContextOutput(msg.author.id, msg.channel.id, localReply);
           return;
         }
       }
 
       if (!parsed) {
+        const fallbackReply = buildContextualFallbackReply(
+          transcript,
+          this.getDefaultRepoId(),
+          geminiFailureMessage
+        );
         await this.bot.createMessage(
           msg.channel.id,
-          buildContextualFallbackReply(transcript, this.getDefaultRepoId(), geminiFailureMessage)
+          fallbackReply
         );
+        this.saveAssistantContextOutput(msg.author.id, msg.channel.id, fallbackReply);
         return;
       }
 
@@ -1160,10 +1241,26 @@ export class DiscordGateway {
     return [...systemMemories, ...userMemories].filter((item) => item.trim().length > 0);
   }
 
+  private getRecentConversationContext(userId: string, channelId: string): string[] {
+    const limit = Math.max(1, Math.min(30, this.config.userContextLimit));
+    return this.stateStore
+      .listRecentUserContext(userId, channelId, limit)
+      .map((item) => {
+        const parsed = this.parseContextEntry(item.content);
+        if (!parsed.content) {
+          return null;
+        }
+        return `${parsed.role === "assistant" ? "A" : "U"}: ${parsed.content}`;
+      })
+      .filter((item): item is string => Boolean(item));
+  }
+
   private getRecentUserContext(userId: string, channelId: string): string[] {
     const limit = Math.max(1, Math.min(30, this.config.userContextLimit));
     return this.stateStore
       .listRecentUserContext(userId, channelId, limit)
+      .map((item) => this.parseContextEntry(item.content))
+      .filter((item) => item.role === "user" && item.content.length > 0)
       .map((item) => item.content)
       .filter((item) => item.trim().length > 0);
   }
@@ -1175,10 +1272,41 @@ export class DiscordGateway {
     }
 
     try {
-      this.stateStore.addUserContextMessage(userId, channelId, text);
+      this.stateStore.addUserContextMessage(userId, channelId, `U: ${text}`);
     } catch (err) {
       this.logger.warn(`[context] save failed: ${(err as Error).message}`);
     }
+  }
+
+  private saveAssistantContextOutput(userId: string, channelId: string, content: string): void {
+    const text = String(content ?? "").trim().replace(/\s+/g, " ");
+    if (!text) {
+      return;
+    }
+
+    const compact = text.slice(0, 800);
+    try {
+      this.stateStore.addUserContextMessage(userId, channelId, `A: ${compact}`);
+    } catch (err) {
+      this.logger.warn(`[context] save failed: ${(err as Error).message}`);
+    }
+  }
+
+  private parseContextEntry(rawContent: string): { role: "user" | "assistant"; content: string } {
+    const text = String(rawContent ?? "").trim();
+    if (!text) {
+      return { role: "user", content: "" };
+    }
+
+    const prefixed = text.match(/^([UA]):\s*(.*)$/);
+    if (!prefixed) {
+      return { role: "user", content: text };
+    }
+
+    return {
+      role: prefixed[1] === "A" ? "assistant" : "user",
+      content: String(prefixed[2] ?? "").trim()
+    };
   }
 
   private trySaveGeminiMemory(userId: string, channelId: string, memoryToSave: string | null): void {
@@ -1503,11 +1631,14 @@ export class DiscordGateway {
     const { slashCommand, args } = payload;
 
     if (slashCommand === "ping") {
+      const providerState = this.orchestrator.getPatchProviderState();
       await interaction.createMessage({
         content:
           `pong (prefix=${this.config.botPrefix}, speech=${this.speechAdapter ? "on" : "off"}, ` +
           `gemini=${this.geminiAdapter ? "on" : "off"}, ` +
           `gemini_model=${this.geminiAdapter ? this.config.geminiModel : "disabled"}, ` +
+          `patch_provider=${providerState.active}, ` +
+          `patch_provider_available=${providerState.available.join("|")}, ` +
           `gemini_first=${this.config.geminiFirst ? "on" : "off"}, ` +
           `memory_gemini_auto=${this.config.memoryGeminiAuto ? "on" : "off"}, ` +
           `memory_context_limit=${this.config.memoryContextLimit}, ` +
@@ -1623,6 +1754,36 @@ export class DiscordGateway {
       const repos = this.orchestrator.listRepos();
       const lines = repos.map((r) => `- ${r.id} (${r.defaultBaseBranch})`).join("\n");
       await interaction.createMessage({ content: lines || "No repos", flags: 64 });
+      return;
+    }
+
+    if (slashCommand === "provider") {
+      const modeRaw = String(args.mode ?? "").trim().toLowerCase();
+      if (!modeRaw) {
+        const state = this.orchestrator.getPatchProviderState();
+        await interaction.createMessage({
+          content:
+            `patch_provider=${state.active}\n` +
+            `display=${state.displayName}\n` +
+            `available=${state.available.join(",")}`,
+          flags: 64
+        });
+        return;
+      }
+
+      if (!["auto", "codex", "gemini"].includes(modeRaw)) {
+        await interaction.createMessage({ content: "mode 仅支持 auto/codex/gemini", flags: 64 });
+        return;
+      }
+
+      const state = this.orchestrator.setPatchProvider(modeRaw as "auto" | "codex" | "gemini");
+      await interaction.createMessage({
+        content:
+          `已切换 patch_provider=${state.active}\n` +
+          `display=${state.displayName}\n` +
+          `available=${state.available.join(",")}`,
+        flags: 64
+      });
       return;
     }
 

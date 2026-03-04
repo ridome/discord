@@ -66,6 +66,12 @@ describe("parseNaturalLanguageCommand", () => {
     expect(parsed?.args.task_id).toBe("task-1");
   });
 
+  it("parses provider switch command", () => {
+    const parsed = parseNaturalLanguageCommand("!codex provider mode=gemini", prefix, botId);
+    expect(parsed?.slashCommand).toBe("provider");
+    expect(parsed?.args.mode).toBe("gemini");
+  });
+
   it("parses voice-transcribed body without trigger", () => {
     const parsed = parseNaturalLanguageBody("创建任务 repo=sample prompt=修复登录");
     expect(parsed?.slashCommand).toBe("task");
@@ -98,6 +104,12 @@ describe("parseNaturalLanguageCommand", () => {
     );
     expect(parsed?.slashCommand).toBe("read");
     expect(parsed?.args.path).toBe("D:\\work\\sample-repo\\new\\a_share_20_30yi.md");
+  });
+
+  it("parses free text provider switch intent", () => {
+    const parsed = parseNaturalLanguageFreeText("请切换到 gemini");
+    expect(parsed?.slashCommand).toBe("provider");
+    expect(parsed?.args.mode).toBe("gemini");
   });
 
   it("does not force chat request into task command", () => {

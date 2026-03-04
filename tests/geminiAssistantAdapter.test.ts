@@ -77,6 +77,20 @@ describe("normalizeGeminiDecision", () => {
     expect(result.memoryToSave).toBe("用户偏好使用中文交流");
   });
 
+  it("maps provider command payload", () => {
+    const result = normalizeGeminiDecision({
+      mode: "command",
+      slashCommand: "provider",
+      args: {
+        mode: "gemini"
+      }
+    });
+
+    expect(result.command).not.toBeNull();
+    expect(result.command?.slashCommand).toBe("provider");
+    expect(result.command?.args.mode).toBe("gemini");
+  });
+
   it("builds fallback model list with dedup", () => {
     const models = getGeminiModelCandidates("gemini-3.0-flash");
     expect(models[0]).toBe("gemini-3.0-flash");

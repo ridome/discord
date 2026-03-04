@@ -1,5 +1,5 @@
 import EventEmitter from "events";
-import { CodexAdapter } from "../adapters/codexAdapter";
+import { PatchGeneratorRouter, PatchProviderName, PatchProviderState } from "../adapters/patchGeneratorRouter";
 import { Logger } from "../logger";
 import { CommandGuard } from "../security/commandGuard";
 import { RepoRegistry } from "../security/repoRegistry";
@@ -32,7 +32,7 @@ interface OrchestratorOptions {
   planApprovalRequired: boolean;
   taskTimeoutMinutes: number;
   streamThrottleSeconds: number;
-  codexRetryCount: number;
+  patchRetryCount: number;
   autoStashBeforeApply: boolean;
 }
 
@@ -52,7 +52,7 @@ export class TaskOrchestrator {
   constructor(
     private readonly store: StateStore,
     private readonly repoRegistry: RepoRegistry,
-    private readonly codexAdapter: CodexAdapter,
+    private readonly patchGenerator: PatchGeneratorRouter,
     private readonly patchEngine: PatchEngine,
     private readonly gitEngine: GitEngine,
     private readonly commandGuard: CommandGuard,
@@ -265,6 +265,14 @@ export class TaskOrchestrator {
     }));
   }
 
+  public getPatchProviderState(): PatchProviderState {
+    return this.patchGenerator.getState();
+  }
+
+  public setPatchProvider(provider: PatchProviderName): PatchProviderState {
+    return this.patchGenerator.setActiveProvider(provider);
+  }
+
   public createNlConfirmation(
     taskId: string,
     userId: string,
@@ -321,7 +329,7 @@ export class TaskOrchestrator {
     const runtime = this.runtimeOptions.get(taskId) ?? { openVsCode: false };
 
     this.store.updateTaskStatus(taskId, "generating_patch");
-    this.log(task, "milestone", "Generating patch with Codex...");
+    this.log(task, "milestone", `Generating patch with ${this.patchGenerator.displayName}...`);
 
     if (runtime.openVsCode) {
       try {
@@ -332,11 +340,11 @@ export class TaskOrchestrator {
     }
 
     let lastErr: Error | null = null;
-    const attempts = Math.max(1, this.options.codexRetryCount + 1);
+    const attempts = Math.max(1, this.options.patchRetryCount + 1);
 
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       try {
-        const patchResult = await this.codexAdapter.generatePatch({
+        const patchResult = await this.patchGenerator.generatePatch({
           repoPath: repo.path,
           userPrompt: task.prompt,
           timeoutMs: this.options.taskTimeoutMinutes * 60 * 1000,
@@ -536,10 +544,10 @@ export class TaskOrchestrator {
   private resolveTestCommands(
     repoId: string,
     testProfile: string | null,
-    codexCommands: string[]
+    suggestedCommands: string[]
   ): { commands: string[]; droppedSuggested: string[]; source: "profile" | "codex" | "default" | "none" } {
     const repo = this.repoRegistry.get(repoId);
-    return selectTestCommands(testProfile, repo.testProfiles, codexCommands);
+    return selectTestCommands(testProfile, repo.testProfiles, suggestedCommands);
   }
 
   private buildCommitMessage(summary: string): string {
@@ -571,7 +579,7 @@ export class TaskOrchestrator {
       "## Prompt",
       ...(task.prompt ? task.prompt.split(/\r?\n/) : ["(empty)"]),
       "",
-      "## Codex Summary",
+      "## Model Summary",
       ...(summary ? summary.split(/\r?\n/) : ["(empty)"])
     ];
 

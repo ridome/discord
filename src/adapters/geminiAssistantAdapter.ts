@@ -32,6 +32,8 @@ export interface GeminiAssistResult {
   memoryToSave: string | null;
 }
 
+export type GeminiInterpretMode = "auto" | "reply_only";
+
 const evolutionSchema = z.object({
   memories: z.array(z.string()).default([])
 });
@@ -59,7 +61,8 @@ const allowedCommands = new Set([
   "run",
   "open",
   "read",
-  "task"
+  "task",
+  "provider"
 ]);
 
 const defaultFallbackModels = ["gemini-2.0-flash", "gemini-1.5-flash"];
@@ -133,6 +136,10 @@ function buildPreview(command: string, args: Record<string, string | boolean>): 
   }
   if (command === "task") {
     return `/task repo=${String(args.repo ?? "")} prompt=${String(args.prompt ?? "")}`.trim();
+  }
+  if (command === "provider") {
+    const mode = String(args.mode ?? "").trim();
+    return mode ? `/provider mode=${mode}` : "/provider";
   }
   return `/${command}`;
 }
@@ -290,6 +297,26 @@ export function normalizeGeminiDecision(
     };
   }
 
+  if (command === "provider") {
+    const mode = String(inputArgs.mode ?? "").trim().toLowerCase();
+    if (!mode) {
+      return {
+        command: { slashCommand: command, args: {}, preview: buildPreview(command, {}) },
+        reply: null,
+        memoryToSave
+      };
+    }
+    if (!["auto", "codex", "gemini"].includes(mode)) {
+      return { command: null, reply: null, memoryToSave };
+    }
+    args.mode = mode;
+    return {
+      command: { slashCommand: command, args, preview: buildPreview(command, args) },
+      reply: null,
+      memoryToSave
+    };
+  }
+
   return { command: null, reply: null, memoryToSave };
 }
 
@@ -308,18 +335,24 @@ function buildPrompt(
   allowedRepoIds: string[],
   allowLocalPathRepo: boolean,
   memoryContext: string[],
-  recentUserInputs: string[]
+  recentConversation: string[],
+  mode: GeminiInterpretMode
 ): string {
   const repoHint = defaultRepoId ? `default_repo=${defaultRepoId}` : "default_repo=";
   const allowedRepoHint = `allowed_repo_ids=${allowedRepoIds.join(",")}`;
   const localPathHint = `allow_local_path_repo=${allowLocalPathRepo ? "true" : "false"}`;
+  const decisionModeHint = `decision_mode=${mode}`;
 
   const memoryHint = memoryContext.length
     ? `known_user_memory=${memoryContext.map((m, idx) => `${idx + 1}. ${m}`).join(" | ")}`
     : "known_user_memory=";
-  const recentInputHint = recentUserInputs.length
-    ? `recent_user_inputs=${recentUserInputs.map((m, idx) => `${idx + 1}. ${m}`).join(" | ")}`
-    : "recent_user_inputs=";
+  const recentDialogueHint = recentConversation.length
+    ? `recent_dialogue=${recentConversation.map((m, idx) => `${idx + 1}. ${m}`).join(" | ")}`
+    : "recent_dialogue=";
+  const modeRule =
+    mode === "reply_only"
+      ? "- decision_mode=reply_only: never output mode=command. Only output mode=reply or mode=none."
+      : "- decision_mode=auto: choose command/reply/none per user intent.";
 
   return [
     "You are a bilingual (Chinese-first) assistant for a Discord coding bot.",
@@ -328,7 +361,7 @@ function buildPrompt(
     "2) mode=reply: directly chat/help in natural Chinese.",
     "Output strict JSON only. No markdown.",
     "JSON schema:",
-    '{"mode":"command|reply|none","slashCommand":"ping|repos|status|approve|reject|cancel|run|open|read|task","args":{"repo":"...","prompt":"...","task_id":"...","cmd":"...","reason":"...","path":"...","start_line":"...","end_line":"...","max_chars":"...","base_branch":"...","test_profile":"...","open_vscode":true|false},"reply":"...","memory":{"remember":true|false,"content":"..."}}',
+    '{"mode":"command|reply|none","slashCommand":"ping|repos|status|approve|reject|cancel|run|open|read|task|provider","args":{"repo":"...","prompt":"...","task_id":"...","cmd":"...","reason":"...","path":"...","start_line":"...","end_line":"...","max_chars":"...","base_branch":"...","test_profile":"...","open_vscode":true|false,"mode":"auto|codex|gemini"},"reply":"...","memory":{"remember":true|false,"content":"..."}}',
     "Rules:",
     "- Use mode=command only when user clearly wants bot/repo/task actions.",
     "- Use mode=reply for greeting, jokes, stories, explanations, brainstorming, or ambiguous requests.",
@@ -338,14 +371,18 @@ function buildPrompt(
     "- If user asks for external path while allow_local_path_repo=false, answer mode=reply and tell them to add id/path mapping in config/repos.json first.",
     "- If user asks whether path/folder can be specified, use mode=reply and include one concrete task command example.",
     "- For local file reading requests, use /read with path; include repo only when user clearly provides it.",
+    "- For model/provider switching query, use /provider. Set args.mode only for auto/codex/gemini.",
     "- For task command, include repo and prompt. If repo missing and default_repo exists, use default_repo.",
     "- Never invent task_id if user did not provide one for status/approve/reject/cancel/open/run.",
     "- Keep reply concise and useful (prefer <= 220 Chinese chars).",
     "- If request could be either chat or command and key params are missing, prefer mode=reply with a clarifying question.",
-    "- Use recent_user_inputs to resolve references like '这个/刚刚那个/上一个'. If still unclear, ask one short clarifying question.",
+    "- Use recent_dialogue (U: user, A: assistant) to resolve references like '这个/刚刚那个/上一个'.",
+    "- For short follow-up messages, continue the same topic from recent_dialogue unless user clearly switches topic.",
+    "- If still unclear, ask one short clarifying question.",
     "- Memory rule: if user gives stable preference/fact that helps future collaboration, set memory.remember=true and provide short memory.content in Chinese.",
     "- Do not store secrets/tokens/passwords in memory. For sensitive data, set memory.remember=false.",
     "- If no useful long-term info, set memory.remember=false.",
+    modeRule,
     "Examples:",
     '- user_text=你好，给我讲个故事 -> {"mode":"reply","reply":"当然可以...（直接讲一个短故事）"}',
     '- user_text=帮我看 task-abc123 状态 -> {"mode":"command","slashCommand":"status","args":{"task_id":"task-abc123"}}',
@@ -354,9 +391,10 @@ function buildPrompt(
     '- user_text=我要仓库外 D:\\work\\test -> if allow_local_path_repo=true then command(/task with repo as that path); otherwise reply with config guidance.',
     allowedRepoHint,
     localPathHint,
+    decisionModeHint,
     `${repoHint}`,
     memoryHint,
-    recentInputHint,
+    recentDialogueHint,
     `user_text=${text}`
   ].join("\n");
 }
@@ -509,7 +547,8 @@ export class GeminiAssistantAdapter {
     allowedRepoIds: string[] = [],
     allowLocalPathRepo = false,
     memoryContext: string[] = [],
-    recentUserInputs: string[] = []
+    recentConversation: string[] = [],
+    mode: GeminiInterpretMode = "auto"
   ): Promise<GeminiAssistResult> {
     const prompt = buildPrompt(
       text,
@@ -517,7 +556,8 @@ export class GeminiAssistantAdapter {
       allowedRepoIds,
       allowLocalPathRepo,
       memoryContext,
-      recentUserInputs
+      recentConversation,
+      mode
     );
     const models = this.options.strictModel ? [this.options.model] : getGeminiModelCandidates(this.options.model);
     let lastError: Error | null = null;
@@ -579,7 +619,15 @@ export class GeminiAssistantAdapter {
       }
 
       try {
-        return normalizeGeminiDecision(tryExtractLooseJson(raw));
+        const normalized = normalizeGeminiDecision(tryExtractLooseJson(raw));
+        if (mode === "reply_only" && normalized.command) {
+          return {
+            command: null,
+            reply: "我先按聊天模式回复。若你要执行任务，请用 /task 或 !codex 前缀命令。",
+            memoryToSave: normalized.memoryToSave
+          };
+        }
+        return normalized;
       } catch (err) {
         this.logger.warn(`Gemini decision parse failed: ${(err as Error).message}`);
         return {
