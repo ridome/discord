@@ -1,0 +1,13 @@
+{
+  "repos": [
+    {
+      "id": "sample",
+      "path": "D:/work/sample-repo",
+      "defaultBaseBranch": "main",
+      "testProfiles": {
+        "default": ["npm test"],
+        "quick": ["npm run test:quick"]
+      }
+    }
+  ]
+}
