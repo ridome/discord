@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>职场人格测试：你是哪位经典剧角？</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Vue 3 -->
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        body {
+            font-family: 'Helvetica Neue', Helvetica, Arial, 'PingFang SC', 'Hiragino Sans GB', 'Heiti SC', 'Microsoft YaHei', 'WenQuanYi Micro Hei', sans-serif;
+            background-color: #f9fafb; /* gray-50 */
+            color: #111827; /* gray-900 */
+        }
+        .fade-enter-active, .fade-leave-active {
+            transition: opacity 0.5s ease;
+        }
+        .fade-enter-from, .fade-leave-to {
+            opacity: 0;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex items-center justify-center p-4">
+    <div id="app" class="w-full max-w-lg bg-white rounded-2xl shadow-xl overflow-hidden min-h-[500px] flex flex-col relative">
+        <transition name="fade" mode="out-in">
+            <!-- Welcome Screen -->
+            <div v-if="currentScreen === 'welcome'" class="flex-1 flex flex-col items-center justify-center p-8 text-center" key="welcome">
+                <h1 class="text-3xl font-bold mb-4 text-gray-800">职场行为心理学测试</h1>
+                <p class="text-gray-500 mb-8 leading-relaxed">
+                    在复杂的职场生态中，你的决策模式、人际边界与目标导向，映射着怎样的潜在人格？<br>
+                    通过15个基于真实职场困境的心理学问题，<br>
+                    我们将为你匹配最契合的<b>经典影视剧人物</b>。
+                </p>
+                <button @click="startQuiz" class="px-8 py-3 bg-gray-900 text-white rounded-full font-medium hover:bg-gray-800 transition-colors shadow-md">
+                    开始探索
+                </button>
+            </div>
+
+            <!-- Quiz Screen -->
+            <div v-else-if="currentScreen === 'quiz'" class="flex-1 flex flex-col p-6" key="quiz">
+                <!-- 进度条 -->
+                <div class="mb-6">
+                    <div class="flex justify-between text-sm text-gray-400 mb-2">
+                        <span>进度</span>
+                        <span>{{ currentQuestionIndex + 1 }} / {{ questions.length }}</span>
+                    </div>
+                    <div class="w-full bg-gray-100 rounded-full h-1.5">
+                        <div class="bg-gray-800 h-1.5 rounded-full transition-all duration-300" :style="{ width: progressPercentage + '%' }"></div>
+                    </div>
+                </div>
+
+                <!-- 问题区 -->
+                <div class="flex-1 flex flex-col justify-center">
+                    <h2 class="text-xl font-medium mb-8 text-gray-800 leading-snug">
+                        {{ currentQuestion.text }}
+                    </h2>
+                    <div class="space-y-4">
+                        <button
+                            v-for="(option, index) in currentQuestion.options"
+                            :key="index"
+                            @click="selectOption(option)"
+                            class="w-full text-left p-4 rounded-xl border border-gray-200 hover:border-gray-800 hover:bg-gray-50 transition-all text-gray-700 font-medium"
+                        >
+                            {{ option.text }}
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Calculating Screen -->
+            <div v-else-if="currentScreen === 'calculating'" class="flex-1 flex flex-col items-center justify-center p-8 text-center" key="calculating">
+                <div class="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-900 mb-6 mx-auto"></div>
+                <p class="text-gray-500 font-medium">正在基于行为心理学模型生成你的人格画像...</p>
+            </div>
+
+            <!-- Result Screen -->
+            <div v-else-if="currentScreen === 'result'" class="flex-1 overflow-y-auto p-6 flex flex-col items-center" key="result">
+                <div class="text-center mb-8 w-full">
+                    <p class="text-sm text-gray-400 mb-2 tracking-widest">你的职场人格是</p>
+                    <h2 class="text-4xl font-black text-gray-900 mb-2">{{ finalResult.name }}</h2>
+                    <p class="text-lg text-gray-600 font-medium">「{{ finalResult.title }}」</p>
+                </div>
+
+                <div class="flex flex-wrap justify-center gap-2 mb-8">
+                    <span v-for="(tag, index) in finalResult.tags" :key="index" class="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm font-medium">
+                        # {{ tag }}
+                    </span>
+                </div>
+
+                <div class="bg-gray-50 rounded-2xl p-6 mb-8 border border-gray-100 w-full shadow-sm">
+                    <h3 class="text-gray-400 text-sm font-bold mb-3 uppercase tracking-wider">职场判词</h3>
+                    <p class="text-gray-700 leading-relaxed text-justify">{{ finalResult.desc }}</p>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4 w-full mb-8">
+                    <div class="bg-green-50 rounded-xl p-4 border border-green-100">
+                        <p class="text-xs text-green-600 font-bold mb-1">最合拍拍档</p>
+                        <p class="text-lg font-bold text-gray-800">{{ finalResult.bestMatch }}</p>
+                    </div>
+                    <div class="bg-red-50 rounded-xl p-4 border border-red-100">
+                        <p class="text-xs text-red-600 font-bold mb-1">职场相克</p>
+                        <p class="text-lg font-bold text-gray-800">{{ finalResult.worstMatch }}</p>
+                    </div>
+                </div>
+
+                <button @click="restartQuiz" class="px-8 py-3 bg-white text-gray-900 border border-gray-300 rounded-full font-medium hover:bg-gray-50 transition-colors shadow-sm w-full">
+                    重新测试
+                </button>
+            </div>
+        </transition>
+    </div>
+
+    <script>
+        const { createApp, ref, computed } = Vue
+
+        createApp({
+            setup() {
+                const currentScreen = ref('welcome') // welcome, quiz, calculating, result
+                const currentQuestionIndex = ref(0)
+                const scores = ref({
+                    EI: 0, // Extroversion/Introversion (主动出击 vs 谋定后动)
+                    TF: 0, // Thinking/Feeling (目标导向/规则 vs 人际导向/情感)
+                    PJ: 0  // Perceiving/Judging (灵活应变 vs 计划秩序)
+                })
+
+                // E/I: 外向主动(>0) vs 内向被动(<0)
+                // T/F: 目标理智(>0) vs 人际情感(<0)
+                // P/J: 灵活应变(>0) vs 规则秩序(<0)
+
+                // 8种人格对应
+                // ETP: 韦小宝 (主动, 目标, 灵活)
+                // ETJ: 王熙凤 (主动, 目标, 秩序)
+                // EFP: 白展堂 (主动, 人际, 灵活)
+                // EFJ: 高启强(前期)/或者刘备 (这里用刘备代表主动、人际、秩序，但既然要是各剧结合，用《狂飙》高启强——长袖善舞、建立利益共同体)
+                // ITP: 甄嬛 (被动/谋定, 目标, 灵活)
+                // ITJ: 沙僧 (被动, 目标, 秩序)
+                // IFP: 盛明兰 (被动/谋定, 人际, 灵活)
+                // IFJ: 沈眉庄 (被动/端庄, 人际, 秩序)
+
+                const personalities = {
+                    'ETP': { name: '韦小宝', title: '职场生存大师', desc: '你八面玲珑，总能在复杂的职场关系中找到缝隙。你目标明确但不死板，极其擅长随机应变。在团队中，你是润滑剂，也是总能绝处逢生的破局者。', tags: ['高情商', '资源整合', '灵活变通'] },
+                    'ETJ': { name: '王熙凤', title: '铁腕实权派', desc: '雷厉风行、杀伐果断是你的代名词。你有着极强的掌控欲和执行力，目标导向，讲究效率和规矩。你是天生的管理者，但有时可能会给人压迫感。', tags: ['结果导向', '掌控全局', '效率至上'] },
+                    'EFP': { name: '白展堂', title: '办公室气氛组', desc: '你平易近人，幽默风趣，是团队里的开心果。你比起枯燥的KPI，更在意工作氛围和同事关系。面对突发状况，你总能用轻松的方式化解尴尬。', tags: ['调节气氛', '人际达人', '适应力强'] },
+                    'EFJ': { name: '高启强', title: '人情世故天花板', desc: '你极具亲和力与领导魅力，擅长通过建立深厚的人际关系网络来达成目标。你懂得权衡各方利益，构建属于自己的坚实团队，讲究长远布局。', tags: ['深谙人性', '团队核心', '长远布局'] },
+                    'ITP': { name: '甄嬛', title: '段位极高的谋略家', desc: '你不轻易展露锋芒，总是谋定而后动。有着极强的隐忍能力和洞察力，为了终极目标可以随时调整策略。不出手则已，一出手必中要害。', tags: ['深度思考', '洞察人心', '策略致胜'] },
+                    'ITJ': { name: '沙僧', title: '定海神针执行者', desc: '你务实、本分、任劳任怨。你严格遵守公司制度，是领导最放心的任务执行者。虽然平时话不多，但在关键时刻，你的靠谱是团队最坚实的后盾。', tags: ['极致靠谱', '原则性强', '默默输出'] },
+                    'IFP': { name: '盛明兰', title: '扮猪吃虎的通透人', desc: '你性格温和，不喜欢无谓的职场内耗。你看透了职场本质，善于保护自己，注重内心平和。但在触及底线时，你会用最柔和的方式予以最坚决的反击。', tags: ['内核稳定', '大智若愚', '边界感强'] },
+                    'IFJ': { name: '沈眉庄', title: '清流型端庄骨干', desc: '你有着极高的职业操守和个人原则。待人真诚、做事讲究体面和规矩。你不屑于职场站队，更愿意用扎实的专业能力和高尚的人格魅力赢得尊重。', tags: ['职业操守', '原则底线', '清高体面'] }
+                }
+
+                const calculatePersonalityCode = () => {
+                    const eOrI = scores.value.EI > 0 ? 'E' : 'I'
+                    const tOrF = scores.value.TF > 0 ? 'T' : 'F'
+                    const pOrJ = scores.value.PJ > 0 ? 'P' : 'J'
+                    return `${eOrI}${tOrF}${pOrJ}`
+                }
+
+                const getMatch = (code) => {
+                    // 简单反转维度产生不同搭配，这里只做趣味映射
+                    const matches = {
+                        'ETP': { best: 'ITJ', worst: 'EFJ' },
+                        'ETJ': { best: 'IFP', worst: 'EFP' },
+                        'EFP': { best: 'ITJ', worst: 'ETJ' },
+                        'EFJ': { best: 'ITP', worst: 'ETP' },
+                        'ITP': { best: 'EFJ', worst: 'IFJ' },
+                        'ITJ': { best: 'ETP', worst: 'EFP' },
+                        'IFP': { best: 'ETJ', worst: 'IFJ' },
+                        'IFJ': { best: 'ETP', worst: 'ITP' }
+                    }
+                    return matches[code] || { best: 'ITP', worst: 'ETJ' }
+                }
+
+                const questions = ref([
+                    // EI 维度 (主动出击 vs 谋定后动) - 5题
+                    {
+                        text: "公司突然空降了一位不熟悉业务的新领导，第一天开会时提出了一个明显不合理的目标，你会：",
+                        options: [
+                            { text: "当面或会后主动找领导沟通，指出问题并提出自己的建议", value: { dimension: 'EI', point: 1 } },
+                            { text: "先不表态，私下观察其他老员工的反应，等形势明朗再做打算", value: { dimension: 'EI', point: -1 } }
+                        ]
+                    },
+                    {
+                        text: "在跨部门合作中，对方迟迟不交付你需要的数据，导致你的工作卡壳，你会：",
+                        options: [
+                            { text: "直接跑到对方工位或打电话催促，必要时拉上双方领导建群解决", value: { dimension: 'EI', point: 1 } },
+                            { text: "发邮件或微信正式催询留存证据，同时先做自己能做的部分", value: { dimension: 'EI', point: -1 } }
+                        ]
+                    },
+                    {
+                        text: "公司有一个很有挑战但也很有曝光度的新项目在招募负责人，你会：",
+                        options: [
+                            { text: "觉得这是个好机会，第一时间向老板毛遂自荐", value: { dimension: 'EI', point: 1 } },
+                            { text: "盘点自己的手头工作和能力储备，如果觉得没十足把握就不主动出头", value: { dimension: 'EI', point: -1 } }
+                        ]
+                    },
+                    {
+                        text: "团建聚餐时，老板让你给大家敬酒说两句，你的内心活动是：",
+                        options: [
+                            { text: "毫无压力，甚至已经想好了一套活跃气氛的说辞", value: { dimension: 'EI', point: 1 } },
+                            { text: "感到社恐，只想低调快速走个过场，赶紧坐下吃饭", value: { dimension: 'EI', point: -1 } }
+                        ]
+                    },
+                    {
+                        text: "在头脑风暴会议上，你通常扮演的角色是：",
+                        options: [
+                            { text: "第一个抛出各种点子的人，不怕说错，旨在激发讨论", value: { dimension: 'EI', point: 1 } },
+                            { text: "默默倾听，在别人说完后，做总结或提出一个深思熟虑的方案", value: { dimension: 'EI', point: -1 } }
+                        ]
+                    },
+
+                    // TF 维度 (目标理智 vs 人际情感) - 5题
+                    {
+                        text: "你的得力下属最近因为失恋状态极差，导致一个重要项目出了小纰漏，你会：",
+                        options: [
+                            { text: "公事公办，指出错误并按规定扣除相应绩效，再谈私人安慰", value: { dimension: 'TF', point: 1 } },
+                            { text: "先安抚情绪，帮他把纰漏补上，绩效考核时手下留情", value: { dimension: 'TF', point: -1 } }
+                        ]
+                    },
+                    {
+                        text: "如果在职场中，‘把事做成’和‘不得罪人’发生冲突，你的原则是：",
+                        options: [
+                            { text: "把事做成最重要，得罪人也在所不惜，职场不是交朋友的地方", value: { dimension: 'TF', point: 1 } },
+                            { text: "尽量找平衡，如果非要得罪人，宁可适当降低项目的完美度", value: { dimension: 'TF', point: -1 } }
+                        ]
+                    },
+                    {
+                        text: "同事向你抱怨另一个部门的流程繁琐，你第一反应是：",
+                        options: [
+                            { text: "帮他分析流程的合理性，或者建议他怎么优化沟通", value: { dimension: 'TF', point: 1 } },
+                            { text: "顺着他的话一起吐槽那个部门，提供情绪价值", value: { dimension: 'TF', point: -1 } }
+                        ]
+                    },
+                    {
+                        text: "面对晋升名额，你和关系很好的平级同事构成了直接竞争，你会：",
+                        options: [
+                            { text: "全力以赴展示自己的成绩，凭实力竞争，觉得这是对彼此的尊重", value: { dimension: 'TF', point: 1 } },
+                            { text: "内心感到纠结和抱歉，甚至考虑如果他比我更需要，可以稍微让一让", value: { dimension: 'TF', point: -1 } }
+                        ]
+                    },
+                    {
+                        text: "老板批评你的方案，但你觉得老板的方向是错的，你会：",
+                        options: [
+                            { text: "拿出数据和逻辑，理性地试图说服老板", value: { dimension: 'TF', point: 1 } },
+                            { text: "顾及老板面子，先应承下来，事后再想办法委婉调整", value: { dimension: 'TF', point: -1 } }
+                        ]
+                    },
+
+                    // PJ 维度 (灵活应变 vs 计划秩序) - 5题
+                    {
+                        text: "周五下午临近下班，客户突然提出要大改需求，要求周一早上看，你会：",
+                        options: [
+                            { text: "根据客户的新思路，周末快速调整，哪怕方案粗糙一点也能按时交差", value: { dimension: 'PJ', point: 1 } },
+                            { text: "感到极其焦虑，因为这打乱了你的周末计划，试图用原有方案说服客户不改", value: { dimension: 'PJ', point: -1 } }
+                        ]
+                    },
+                    {
+                        text: "你每天的工作习惯更偏向于：",
+                        options: [
+                            { text: "先看心情和紧急程度，随时调整工作顺序，穿插着做不同任务", value: { dimension: 'PJ', point: 1 } },
+                            { text: "早上列好详细的To-Do List，按部就班一项项划掉才安心", value: { dimension: 'PJ', point: -1 } }
+                        ]
+                    },
+                    {
+                        text: "公司规定报销必须贴好发票并走繁琐流程，但你弄丢了一张小额打车票，你会：",
+                        options: [
+                            { text: "找一张别的票凑数，或者找财务通融一下，觉得结果对得上就行", value: { dimension: 'PJ', point: 1 } },
+                            { text: "自认倒霉，不报销了，或者严格按照丢失发票的规章制度写说明", value: { dimension: 'PJ', point: -1 } }
+                        ]
+                    },
+                    {
+                        text: "你的电脑桌面和实体办公桌通常是：",
+                        options: [
+                            { text: "比较随意，文件常常堆在一起，但你自己知道东西在哪", value: { dimension: 'PJ', point: 1 } },
+                            { text: "井井有条，文件夹分类清晰，桌面干干净净", value: { dimension: 'PJ', point: -1 } }
+                        ]
+                    },
+                    {
+                        text: "接手一个全新领域的项目时，你的切入方式是：",
+                        options: [
+                            { text: "先干起来再说，边做边学，遇到问题再想办法解决", value: { dimension: 'PJ', point: 1 } },
+                            { text: "先花时间查阅大量资料，制定详尽的计划和里程碑，再开始动手", value: { dimension: 'PJ', point: -1 } }
+                        ]
+                    }
+                ])
+
+                const currentQuestion = computed(() => questions.value[currentQuestionIndex.value])
+                const progressPercentage = computed(() => ((currentQuestionIndex.value + 1) / questions.value.length) * 100)
+
+                const startQuiz = () => {
+                    currentScreen.value = 'quiz'
+                }
+
+                const finalResult = ref(null)
+
+                const selectOption = (option) => {
+                    const { dimension, point } = option.value
+                    scores.value[dimension] += point
+
+                    if (currentQuestionIndex.value < questions.value.length - 1) {
+                        currentQuestionIndex.value++
+                    } else {
+                        finishQuiz()
+                    }
+                }
+
+                const restartQuiz = () => {
+                    scores.value = { EI: 0, TF: 0, PJ: 0 }
+                    currentQuestionIndex.value = 0
+                    finalResult.value = null
+                    currentScreen.value = 'welcome'
+                }
+
+                const finishQuiz = () => {
+                    currentScreen.value = 'calculating'
+                    setTimeout(() => {
+                        const code = calculatePersonalityCode()
+                        const personality = personalities[code]
+                        const matchInfo = getMatch(code)
+
+                        finalResult.value = {
+                            code,
+                            ...personality,
+                            bestMatch: personalities[matchInfo.best].name,
+                            worstMatch: personalities[matchInfo.worst].name
+                        }
+                        currentScreen.value = 'result'
+                    }, 2000)
+                }
+
+                return {
+                    currentScreen,
+                    finalResult,
+                    currentQuestionIndex,
+                    questions,
+                    currentQuestion,
+                    progressPercentage,
+                    startQuiz,
+                    selectOption,
+                    restartQuiz
+                }
+            }
+        }).mount('#app')
+    </script>
+</body>
+</html>
