@@ -1,0 +1,604 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Reolink CLI 功能架构全景大屏</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Fira+Code:wght@400;500&family=Inter:wght@400;600;700&display=swap');
+
+        :root {
+            --bg-main: #0f172a;
+            --bg-card: #1e293b;
+            --glow-green: #10b981;
+            --glow-blue: #3b82f6;
+            --text-main: #f8fafc;
+        }
+
+        body {
+            background-color: var(--bg-main);
+            color: var(--text-main);
+            font-family: 'Inter', sans-serif;
+            overflow-x: hidden;
+            background-image:
+                radial-gradient(circle at 50% 0%, rgba(59, 130, 246, 0.15) 0%, transparent 50%),
+                linear-gradient(to right, rgba(255, 255, 255, 0.02) 1px, transparent 1px),
+                linear-gradient(to bottom, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
+            background-size: 100% 100%, 40px 40px, 40px 40px;
+        }
+
+        .font-mono { font-family: 'Fira Code', monospace; }
+
+        .card-panel {
+            background-color: rgba(30, 41, 59, 0.8);
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(148, 163, 184, 0.1);
+            transition: all 0.3s ease;
+        }
+
+        .card-panel:hover {
+            border-color: rgba(59, 130, 246, 0.4);
+            box-shadow: 0 0 20px rgba(59, 130, 246, 0.1);
+            transform: translateY(-2px);
+        }
+
+        .glow-border-green {
+            box-shadow: 0 0 15px rgba(16, 185, 129, 0.2), inset 0 0 10px rgba(16, 185, 129, 0.1);
+            border: 1px solid rgba(16, 185, 129, 0.5);
+        }
+
+        .glow-text-blue { text-shadow: 0 0 10px rgba(59, 130, 246, 0.6); }
+        .glow-text-green { text-shadow: 0 0 10px rgba(16, 185, 129, 0.6); }
+        .glow-text-red { text-shadow: 0 0 10px rgba(239, 68, 68, 0.6); }
+
+        /* Animation utilities */
+        .typing-cursor::after {
+            content: '▋';
+            animation: blink 1s step-end infinite;
+        }
+        @keyframes blink { 50% { opacity: 0; } }
+
+        /* Beam Animation */
+        .beam-container {
+            position: relative;
+            height: 60px;
+            width: 2px;
+            background: rgba(59, 130, 246, 0.2);
+            margin: 0 auto;
+        }
+
+        .beam {
+            position: absolute;
+            top: 0;
+            left: -1px;
+            width: 4px;
+            height: 0;
+            background: var(--glow-blue);
+            box-shadow: 0 0 15px var(--glow-blue), 0 0 30px var(--glow-blue);
+            border-radius: 4px;
+            opacity: 0;
+        }
+
+        .beam.active {
+            animation: shoot-beam 0.8s ease-out forwards;
+        }
+
+        @keyframes shoot-beam {
+            0% { height: 0; opacity: 1; top: 0; }
+            50% { height: 100%; opacity: 1; top: 0; }
+            100% { height: 0; opacity: 0; top: 100%; }
+        }
+
+        /* Shatter Animation for Lock */
+        .shatter {
+            animation: shatter-effect 0.5s ease-out forwards;
+        }
+
+        @keyframes shatter-effect {
+            0% { transform: scale(1); opacity: 1; filter: brightness(1); }
+            50% { transform: scale(1.2); opacity: 0.8; filter: brightness(2); }
+            100% { transform: scale(0); opacity: 0; filter: brightness(3); display: none;}
+        }
+
+        /* Pop in for Unlocked */
+        .pop-in {
+            animation: pop-in-effect 0.5s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+        }
+
+        @keyframes pop-in-effect {
+            0% { transform: scale(0); opacity: 0; }
+            100% { transform: scale(1); opacity: 1; }
+        }
+
+        .pulse-glow { animation: pulse-glow 2s infinite; }
+        @keyframes pulse-glow {
+            0% { box-shadow: 0 0 5px rgba(16, 185, 129, 0.2); }
+            50% { box-shadow: 0 0 20px rgba(16, 185, 129, 0.6); }
+            100% { box-shadow: 0 0 5px rgba(16, 185, 129, 0.2); }
+        }
+
+        /* Connecting lines for architecture */
+        .arch-line {
+            width: 2px;
+            background: linear-gradient(to bottom, rgba(59, 130, 246, 0.5), rgba(16, 185, 129, 0.5));
+            margin: 0 auto;
+        }
+
+        .arch-line-h {
+            height: 2px;
+            background: rgba(148, 163, 184, 0.2);
+            position: relative;
+            top: 50%;
+            z-index: -1;
+        }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; }
+        ::-webkit-scrollbar-track { background: rgba(15, 23, 42, 0.5); }
+        ::-webkit-scrollbar-thumb { background: rgba(59, 130, 246, 0.3); border-radius: 3px; }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(59, 130, 246, 0.5); }
+    </style>
+</head>
+<body class="min-h-screen p-4 md:p-8 flex flex-col items-center">
+    <!-- Architecture Diagram Container -->
+    <div class="max-w-7xl w-full flex flex-col gap-6 relative">
+
+        <!-- HEADER -->
+        <header class="text-center mb-4 space-y-2">
+            <h1 class="text-3xl md:text-4xl font-bold tracking-tight text-transparent bg-clip-text bg-gradient-to-r from-blue-400 via-green-300 to-blue-400 glow-text-blue">
+                Reolink CLI - 企业级大模型与物理设备的统一抓手
+            </h1>
+            <p class="text-slate-400 font-mono text-sm md:text-base">
+                Bypass Deadlock. Built with <span class="text-[#00ADD8] font-bold">Go</span>. Powered by Baichuan Protocol.
+            </p>
+        </header>
+
+        <!-- LAYER 1: Interface Layer -->
+        <div class="relative">
+            <div class="absolute -left-6 top-1/2 -translate-y-1/2 text-xs font-mono text-slate-500 rotate-180" style="writing-mode: vertical-rl;">L1: INTERFACE</div>
+            <div class="grid grid-cols-1 md:grid-cols-3 gap-6 relative z-10">
+                <!-- 1.1 LLM Agent / Chat -->
+                <div class="card-panel rounded-xl p-5 flex flex-col h-[300px] border-t-2 border-t-purple-500/50">
+                    <div class="flex items-center gap-2 mb-3 border-b border-slate-700/50 pb-2">
+                        <svg class="w-5 h-5 text-purple-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z"></path></svg>
+                        <h3 class="font-bold text-slate-200">AI 大模型 / LLM Agent</h3>
+                        <span class="ml-auto text-[10px] bg-purple-500/20 text-purple-300 px-2 py-0.5 rounded border border-purple-500/30 font-mono">Function Calling</span>
+                    </div>
+
+                    <div id="chat-history" class="flex-1 overflow-y-auto space-y-3 mb-3 text-sm pr-2">
+                        <div class="bg-blue-900/20 border border-blue-500/30 rounded-lg p-2 text-blue-200 self-start w-[85%]">
+                            <span class="text-xs opacity-50 block mb-1">System</span>
+                            等待接收自然语言调配指令...
+                        </div>
+                    </div>
+
+                    <div class="relative shrink-0 mt-auto">
+                        <input type="text" id="chat-input" class="w-full bg-slate-900/80 border border-slate-600/50 rounded p-2.5 pr-10 text-sm text-slate-200 focus:outline-none focus:border-purple-500/50" placeholder="输入：执行一键破局...">
+                        <button id="chat-send" class="absolute right-2 top-1/2 -translate-y-1/2 text-purple-400 hover:text-purple-300">
+                            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- 1.2 Terminal -->
+                <div class="card-panel rounded-xl p-5 flex flex-col h-[300px] border-t-2 border-t-green-500/50">
+                    <div class="flex items-center gap-2 mb-3 border-b border-slate-700/50 pb-2">
+                        <svg class="w-5 h-5 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"></path></svg>
+                        <h3 class="font-bold text-slate-200">Headless 极客终端</h3>
+                    </div>
+                    <div class="flex-1 bg-black/60 rounded p-3 font-mono text-sm text-green-400 overflow-hidden relative">
+                        <div class="text-green-600 mb-2"># User interactive mode</div>
+                        <div class="flex">
+                            <span class="text-green-600 mr-2">$</span>
+                            <span id="terminal-typing" class="typing-cursor"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 1.3 CI/CD -->
+                <div class="card-panel rounded-xl p-5 flex flex-col h-[300px] border-t-2 border-t-blue-500/50">
+                    <div class="flex items-center gap-2 mb-3 border-b border-slate-700/50 pb-2">
+                        <svg class="w-5 h-5 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+                        <h3 class="font-bold text-slate-200">ToB 批量部署/CI-CD</h3>
+                    </div>
+                    <div class="flex-1 flex flex-col items-center justify-center gap-4">
+                        <div class="flex gap-4">
+                            <!-- GitHub Action mock icon -->
+                            <div class="w-12 h-12 bg-slate-800 rounded-full flex items-center justify-center border border-slate-600 shadow-lg">
+                                <svg class="w-6 h-6 text-white" fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd"></path></svg>
+                            </div>
+                            <!-- Docker mock icon -->
+                            <div class="w-12 h-12 bg-blue-900/50 rounded-full flex items-center justify-center border border-blue-500/50 shadow-lg">
+                                <svg class="w-6 h-6 text-blue-400" fill="currentColor" viewBox="0 0 24 24"><path d="M13.983 11.078h2.119a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.119a.185.185 0 00-.185.185v1.888c0 .102.083.185.185.185m-2.954-5.46h2.118a.186.186 0 00.186-.186V3.544a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m0 2.716h2.118a.187.187 0 00.186-.186V6.258a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.186.185.186m-2.93 0h2.12a.186.186 0 00.184-.186V6.258a.185.185 0 00-.185-.185h-2.119a.185.185 0 00-.185.185v1.888c0 .102.083.186.185.186m2.93 2.744h2.118a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m-2.93 0h2.12a.187.187 0 00.184-.185V9.006a.186.186 0 00-.185-.186h-2.119a.185.185 0 00-.185.185v1.888c0 .102.083.185.185.185m-2.93 0h2.12a.187.187 0 00.184-.185V9.006a.186.186 0 00-.185-.186h-2.119a.185.185 0 00-.185.185v1.888c0 .102.083.185.185.185m-2.93 0h2.12a.187.187 0 00.184-.185V9.006a.186.186 0 00-.185-.186h-2.119a.186.186 0 00-.185.185v1.888c0 .102.082.185.185.185M23.763 9.89c-.065-.051-.672-.51-1.954-.51-.338.001-.676.03-1.007.087a7.096 7.096 0 00-1.228-2.131c-.115-.13-.31-.14-.436-.02l-.24.225c-.155.145-.164.39-.02.54.685.714 1.12 1.67 1.252 2.705-1.06.03-2.122.046-3.182.046H2.71c-.26 0-.52-.01-.778-.02l-.01.01c-.147.165-.246.368-.287.585-.05.27-.08.54-.08.814 0 2.26 1.86 4.103 4.148 4.103h12.72c2.03-.004 3.73-1.488 4.05-3.48.06-.376.09-.76.09-1.144 0-.306-.02-.61-.06-.913a.19.19 0 00-.04-.083z"></path></svg>
+                            </div>
+                        </div>
+                        <div class="text-sm font-mono text-slate-400 bg-slate-900 px-3 py-1 rounded border border-slate-700">
+                            Automation pipeline ready
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Connection to L2 -->
+            <div class="arch-line h-8 mt-2"></div>
+        </div>
+
+        <!-- LAYER 2: Core Engine Layer -->
+        <div class="relative">
+            <div class="absolute -left-6 top-1/2 -translate-y-1/2 text-xs font-mono text-slate-500 rotate-180" style="writing-mode: vertical-rl;">L2: CORE ENGINE</div>
+            <div class="card-panel rounded-2xl p-6 md:p-8 relative overflow-hidden">
+                <!-- Background Decoration -->
+                <div class="absolute top-0 right-0 p-4 opacity-5 pointer-events-none">
+                    <span class="font-mono text-8xl font-bold">Go</span>
+                </div>
+
+                <div class="text-center mb-6">
+                    <h2 class="text-xl font-bold text-slate-100">CLI 核心引擎 (Single Binary)</h2>
+                    <p class="text-xs text-slate-400 mt-1">Cross-platform | High-concurrency | Zero-dependency</p>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-7 gap-6 items-center">
+
+                    <!-- Left Sub-engine -->
+                    <div class="md:col-span-2 bg-slate-800/50 border border-slate-600/50 rounded-xl p-4 flex flex-col items-center text-center">
+                        <svg class="w-8 h-8 text-blue-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z"></path></svg>
+                        <h4 class="font-bold text-sm text-slate-200 mb-2">基于 IP 本地直连</h4>
+                        <div class="flex flex-wrap justify-center gap-1">
+                            <span class="text-[10px] bg-blue-900/30 text-blue-300 px-1.5 py-0.5 rounded">UDP广播</span>
+                            <span class="text-[10px] bg-blue-900/30 text-blue-300 px-1.5 py-0.5 rounded">零延迟</span>
+                            <span class="text-[10px] bg-blue-900/30 text-blue-300 px-1.5 py-0.5 rounded">离线可用</span>
+                        </div>
+                    </div>
+
+                    <!-- Connectors -->
+                    <div class="hidden md:flex justify-center items-center opacity-50">
+                        <svg class="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"></path></svg>
+                    </div>
+
+                    <!-- Central Highlight: Decoder -->
+                    <div class="md:col-span-3 glow-border-green bg-black/60 rounded-xl p-5 relative z-10 flex flex-col items-center text-center transform hover:scale-105 transition-transform duration-300">
+                        <!-- Tiny badge -->
+                        <div class="absolute -top-3 bg-green-900/80 border border-green-500 text-green-300 text-[10px] px-2 py-0.5 rounded-full font-bold tracking-wider">
+                            CORE
+                        </div>
+
+                        <h3 class="font-mono text-lg font-bold text-green-400 glow-text-green mb-2">INIT (int) 百川协议解码器</h3>
+                        <p class="text-xs text-slate-300 mb-3 leading-relaxed">
+                            将上层 CLI 意图直接翻译为底层百川私有协议二进制流。<br>
+                            <strong class="text-green-300">完全绕过 HTTP 锁定！</strong>
+                        </p>
+
+                        <div class="w-full bg-slate-900 rounded p-2 text-[10px] font-mono text-green-500/70 overflow-hidden relative">
+                            <div class="opacity-50">0x00 0x1A 0xFF [Payload] -> Reolink_P2P</div>
+                        </div>
+                    </div>
+
+                    <!-- Connectors -->
+                    <div class="hidden md:flex justify-center items-center opacity-50">
+                        <svg class="w-6 h-6 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 19l-7-7m0 0l7-7m-7 7h18"></path></svg>
+                    </div>
+
+                    <!-- Right Sub-engine -->
+                    <div class="md:col-span-2 bg-slate-800/50 border border-slate-600/50 rounded-xl p-4 flex flex-col items-center text-center">
+                        <svg class="w-8 h-8 text-cyan-400 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 01-9 9m9-9a9 9 0 00-9-9m9 9H3m9 9a9 9 0 01-9-9m9 9c1.657 0 3-4.03 3-9s-1.343-9-3-9m0 18c-1.657 0-3-4.03-3-9s1.343-9 3-9m-9 9a9 9 0 019-9"></path></svg>
+                        <h4 class="font-bold text-sm text-slate-200 mb-2">基于 UID P2P穿透</h4>
+                        <div class="flex flex-wrap justify-center gap-1">
+                            <span class="text-[10px] bg-cyan-900/30 text-cyan-300 px-1.5 py-0.5 rounded">账号鉴权</span>
+                            <span class="text-[10px] bg-cyan-900/30 text-cyan-300 px-1.5 py-0.5 rounded">跨地域</span>
+                            <span class="text-[10px] bg-cyan-900/30 text-cyan-300 px-1.5 py-0.5 rounded">多门店管控</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Connection to L3 -->
+            <div class="arch-line h-8 mt-2 relative">
+                <!-- Beam Animation Container -->
+                <div class="beam-container absolute left-1/2 -translate-x-1/2 top-0 h-full">
+                    <div id="breakout-beam-1" class="beam"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- LAYER 3: Advanced Capabilities -->
+        <div class="relative">
+            <div class="absolute -left-6 top-1/2 -translate-y-1/2 text-xs font-mono text-slate-500 rotate-180" style="writing-mode: vertical-rl;">L3: CAPABILITIES</div>
+
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 relative z-10">
+
+                <div class="feature-card card-panel rounded-lg p-3 border-b-2 border-b-slate-600 transition-colors duration-300 flex flex-col items-center text-center">
+                    <span class="text-xl mb-1">📦</span>
+                    <h4 class="font-bold text-xs text-slate-200">Orchestration</h4>
+                    <p class="text-[10px] text-slate-400 mt-1">业务逻辑编排<br>分子级替换原子级调用</p>
+                </div>
+
+                <div class="feature-card card-panel rounded-lg p-3 border-b-2 border-b-slate-600 transition-colors duration-300 flex flex-col items-center text-center">
+                    <span class="text-xl mb-1">🚀</span>
+                    <h4 class="font-bold text-xs text-slate-200">Fleet Mgt</h4>
+                    <p class="text-[10px] text-slate-400 mt-1">海量设备批量操作<br><code class="bg-slate-900 px-1 rounded">--all</code> / <code class="bg-slate-900 px-1 rounded">--tags</code></p>
+                </div>
+
+                <div class="feature-card card-panel rounded-lg p-3 border-b-2 border-b-slate-600 transition-colors duration-300 flex flex-col items-center text-center">
+                    <span class="text-xl mb-1">📊</span>
+                    <h4 class="font-bold text-xs text-slate-200">Standard Output</h4>
+                    <p class="text-[10px] text-slate-400 mt-1">标准化 JSON 流<br><code class="bg-slate-900 px-1 rounded">| jq</code> 无缝对接</p>
+                </div>
+
+                <div class="feature-card card-panel rounded-lg p-3 border-b-2 border-b-slate-600 transition-colors duration-300 flex flex-col items-center text-center">
+                    <span class="text-xl mb-1">🛡️</span>
+                    <h4 class="font-bold text-xs text-slate-200">Dry-run</h4>
+                    <p class="text-[10px] text-slate-400 mt-1">前置防呆校验<br><code class="bg-slate-900 px-1 rounded">--dry-run</code></p>
+                </div>
+
+            </div>
+
+            <!-- Connection to L4 -->
+            <div class="arch-line h-8 mt-2 relative">
+                <div class="beam-container absolute left-1/2 -translate-x-1/2 top-0 h-full">
+                    <div id="breakout-beam-2" class="beam"></div>
+                </div>
+            </div>
+        </div>
+
+        <!-- LAYER 4: Hardware Breakout Layer -->
+        <div class="relative">
+            <div class="absolute -left-6 top-1/2 -translate-y-1/2 text-xs font-mono text-slate-500 rotate-180" style="writing-mode: vertical-rl;">L4: HARDWARE</div>
+
+            <div class="card-panel rounded-xl p-6 border border-slate-700">
+                <div class="flex justify-between items-center mb-6">
+                    <h3 class="font-bold text-slate-200 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 002-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10"></path></svg>
+                        物理设备集群突破 (Hardware Breakout)
+                    </h3>
+                    <button id="btn-breakout" class="bg-red-900/50 hover:bg-red-800/80 border border-red-500/50 text-red-200 px-4 py-2 rounded-lg text-sm font-bold transition-all shadow-[0_0_15px_rgba(239,68,68,0.3)] hover:shadow-[0_0_20px_rgba(239,68,68,0.5)]">
+                        ⚡ 执行 reolink init 破局
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-2 md:grid-cols-4 gap-6 relative">
+
+                    <!-- Camera 1 -->
+                    <div class="camera-node flex flex-col items-center">
+                        <div class="relative w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center border-2 border-slate-600 mb-3 z-10 node-icon">
+                            <!-- Camera SVG -->
+                            <svg class="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+
+                            <!-- Lock Icon Overlay -->
+                            <div class="lock-icon absolute -bottom-2 -right-2 bg-red-900 border border-red-500 rounded-full p-1 shadow-[0_0_10px_rgba(239,68,68,0.8)] z-20">
+                                <svg class="w-4 h-4 text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"></path></svg>
+                            </div>
+
+                            <!-- Success Overlay (Hidden initially) -->
+                            <div class="success-icon absolute -bottom-2 -right-2 bg-green-900 border border-green-500 rounded-full p-1 shadow-[0_0_10px_rgba(16,185,129,0.8)] z-20 hidden">
+                                <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                            </div>
+                        </div>
+
+                        <div class="text-center w-full">
+                            <div class="text-xs font-bold text-slate-300">Cam-A1 (门店)</div>
+                            <div class="status-text mt-1 text-[10px] bg-red-900/30 text-red-400 px-2 py-1 rounded border border-red-900/50">
+                                HTTP/RTSP 端口已锁死<br>(CGI 空中楼阁)
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Camera 2 -->
+                    <div class="camera-node flex flex-col items-center">
+                        <div class="relative w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center border-2 border-slate-600 mb-3 z-10 node-icon">
+                            <svg class="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                            <div class="lock-icon absolute -bottom-2 -right-2 bg-red-900 border border-red-500 rounded-full p-1 shadow-[0_0_10px_rgba(239,68,68,0.8)] z-20">
+                                <svg class="w-4 h-4 text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"></path></svg>
+                            </div>
+                            <div class="success-icon absolute -bottom-2 -right-2 bg-green-900 border border-green-500 rounded-full p-1 shadow-[0_0_10px_rgba(16,185,129,0.8)] z-20 hidden">
+                                <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                            </div>
+                        </div>
+                        <div class="text-center w-full">
+                            <div class="text-xs font-bold text-slate-300">Cam-B2 (仓库)</div>
+                            <div class="status-text mt-1 text-[10px] bg-red-900/30 text-red-400 px-2 py-1 rounded border border-red-900/50">
+                                HTTP/RTSP 端口已锁死<br>(CGI 空中楼阁)
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Camera 3 -->
+                    <div class="camera-node flex flex-col items-center">
+                        <div class="relative w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center border-2 border-slate-600 mb-3 z-10 node-icon">
+                            <svg class="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                            <div class="lock-icon absolute -bottom-2 -right-2 bg-red-900 border border-red-500 rounded-full p-1 shadow-[0_0_10px_rgba(239,68,68,0.8)] z-20">
+                                <svg class="w-4 h-4 text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"></path></svg>
+                            </div>
+                            <div class="success-icon absolute -bottom-2 -right-2 bg-green-900 border border-green-500 rounded-full p-1 shadow-[0_0_10px_rgba(16,185,129,0.8)] z-20 hidden">
+                                <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                            </div>
+                        </div>
+                        <div class="text-center w-full">
+                            <div class="text-xs font-bold text-slate-300">Cam-C3 (外墙)</div>
+                            <div class="status-text mt-1 text-[10px] bg-red-900/30 text-red-400 px-2 py-1 rounded border border-red-900/50">
+                                HTTP/RTSP 端口已锁死<br>(CGI 空中楼阁)
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Camera 4 -->
+                    <div class="camera-node flex flex-col items-center">
+                        <div class="relative w-16 h-16 bg-slate-800 rounded-full flex items-center justify-center border-2 border-slate-600 mb-3 z-10 node-icon">
+                            <svg class="w-8 h-8 text-slate-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z"></path></svg>
+                            <div class="lock-icon absolute -bottom-2 -right-2 bg-red-900 border border-red-500 rounded-full p-1 shadow-[0_0_10px_rgba(239,68,68,0.8)] z-20">
+                                <svg class="w-4 h-4 text-red-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"></path></svg>
+                            </div>
+                            <div class="success-icon absolute -bottom-2 -right-2 bg-green-900 border border-green-500 rounded-full p-1 shadow-[0_0_10px_rgba(16,185,129,0.8)] z-20 hidden">
+                                <svg class="w-4 h-4 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path></svg>
+                            </div>
+                        </div>
+                        <div class="text-center w-full">
+                            <div class="text-xs font-bold text-slate-300">Cam-D4 (走廊)</div>
+                            <div class="status-text mt-1 text-[10px] bg-red-900/30 text-red-400 px-2 py-1 rounded border border-red-900/50">
+                                HTTP/RTSP 端口已锁死<br>(CGI 空中楼阁)
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Horizontal connector line behind nodes -->
+                    <div class="absolute top-8 left-[10%] right-[10%] h-0.5 bg-slate-700/50 z-0"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Interactive Logic -->
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            // 1. Terminal Typing Effect
+            const typingSpan = document.getElementById('terminal-typing');
+            const commands = ['reolink-cli scan', 'reolink-cli status', 'waiting for instruction...'];
+            let cmdIndex = 0;
+            let charIndex = 0;
+            let isDeleting = false;
+
+            function typeEffect() {
+                const currentCmd = commands[cmdIndex];
+
+                if (isDeleting) {
+                    typingSpan.textContent = currentCmd.substring(0, charIndex - 1);
+                    charIndex--;
+                } else {
+                    typingSpan.textContent = currentCmd.substring(0, charIndex + 1);
+                    charIndex++;
+                }
+
+                let typeSpeed = isDeleting ? 50 : 100;
+
+                if (!isDeleting && charIndex === currentCmd.length) {
+                    typeSpeed = 2000; // Pause at end
+                    isDeleting = true;
+                } else if (isDeleting && charIndex === 0) {
+                    isDeleting = false;
+                    cmdIndex = (cmdIndex + 1) % commands.length;
+                    typeSpeed = 500; // Pause before new word
+                }
+
+                setTimeout(typeEffect, typeSpeed);
+            }
+            setTimeout(typeEffect, 1000);
+
+            // 2. Chat Interaction
+            const chatInput = document.getElementById('chat-input');
+            const chatSendBtn = document.getElementById('chat-send');
+            const chatHistory = document.getElementById('chat-history');
+
+            function addChatMessage(role, text) {
+                const msgDiv = document.createElement('div');
+                if (role === 'user') {
+                    msgDiv.className = 'bg-slate-800 border border-slate-600 rounded-lg p-2 text-slate-200 self-end ml-auto w-[85%]';
+                    msgDiv.innerHTML = `<span class="text-xs opacity-50 block mb-1">Human</span>${text}`;
+                } else {
+                    msgDiv.className = 'bg-purple-900/20 border border-purple-500/30 rounded-lg p-2 text-purple-200 self-start w-[85%]';
+                    msgDiv.innerHTML = `<span class="text-xs opacity-50 block mb-1">Agent</span>${text}`;
+                }
+                chatHistory.appendChild(msgDiv);
+                chatHistory.scrollTop = chatHistory.scrollHeight;
+            }
+
+            function handleChatSubmit() {
+                const text = chatInput.value.trim();
+                if (!text) return;
+
+                addChatMessage('user', text);
+                chatInput.value = '';
+
+                setTimeout(() => {
+                    addChatMessage('agent', '解析意图：破局。即将调用 Function: <code>reolink-cli init</code> ...');
+                    setTimeout(triggerBreakout, 1000);
+                }, 600);
+            }
+
+            chatSendBtn.addEventListener('click', handleChatSubmit);
+            chatInput.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') handleChatSubmit();
+            });
+
+            // 3. Breakout Animation Logic
+            const btnBreakout = document.getElementById('btn-breakout');
+            let isBrokenOut = false;
+
+            function triggerBreakout() {
+                if (isBrokenOut) return;
+                isBrokenOut = true;
+
+                // Update Button State
+                btnBreakout.textContent = "执行中...";
+                btnBreakout.classList.replace('bg-red-900/50', 'bg-blue-900/50');
+                btnBreakout.classList.replace('border-red-500/50', 'border-blue-500/50');
+                btnBreakout.classList.replace('text-red-200', 'text-blue-200');
+
+                // Step 1: Shoot Beam 1 (L2 to L3)
+                const beam1 = document.getElementById('breakout-beam-1');
+                beam1.classList.add('active');
+
+                setTimeout(() => {
+                    // Step 2: Highlight L3 Features
+                    const features = document.querySelectorAll('.feature-card');
+                    features.forEach(card => {
+                        card.classList.replace('border-b-slate-600', 'border-b-green-500');
+                        card.classList.add('shadow-[0_4px_15px_rgba(16,185,129,0.2)]');
+                    });
+
+                    // Step 3: Shoot Beam 2 (L3 to L4)
+                    const beam2 = document.getElementById('breakout-beam-2');
+                    beam2.classList.add('active');
+
+                    setTimeout(() => {
+                        // Step 4: Shatter locks and update devices
+                        const nodes = document.querySelectorAll('.camera-node');
+
+                        nodes.forEach((node, index) => {
+                            setTimeout(() => {
+                                const lockIcon = node.querySelector('.lock-icon');
+                                const successIcon = node.querySelector('.success-icon');
+                                const statusText = node.querySelector('.status-text');
+                                const nodeIcon = node.querySelector('.node-icon');
+
+                                // Shatter lock
+                                lockIcon.classList.add('shatter');
+
+                                setTimeout(() => {
+                                    // Show success
+                                    successIcon.classList.remove('hidden');
+                                    successIcon.classList.add('pop-in');
+
+                                    // Change icon border
+                                    nodeIcon.classList.replace('border-slate-600', 'border-green-500');
+                                    nodeIcon.classList.add('pulse-glow');
+
+                                    // Change text
+                                    statusText.classList.replace('bg-red-900/30', 'bg-green-900/30');
+                                    statusText.classList.replace('text-red-400', 'text-green-400');
+                                    statusText.classList.replace('border-red-900/50', 'border-green-500/50');
+                                    statusText.innerHTML = '端口已解锁<br>CGI 激活就绪！';
+                                }, 300);
+
+                            }, index * 150); // Staggered effect
+                        });
+
+                        // Final button state
+                        setTimeout(() => {
+                            btnBreakout.innerHTML = "✅ 破局成功，全域掌控";
+                            btnBreakout.classList.replace('bg-blue-900/50', 'bg-green-900/50');
+                            btnBreakout.classList.replace('border-blue-500/50', 'border-green-500/50');
+                            btnBreakout.classList.replace('text-blue-200', 'text-green-200');
+
+                            addChatMessage('agent', '底层协议穿透完成，CGI 接口已全面激活，可以接受指令调度。');
+                        }, 800);
+
+                    }, 400); // Wait for Beam 2
+
+                }, 400); // Wait for Beam 1
+            }
+
+            btnBreakout.addEventListener('click', triggerBreakout);
+        });
+    </script>
+</body>
+</html>
